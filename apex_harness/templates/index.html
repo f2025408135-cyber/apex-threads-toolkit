@@ -1,0 +1,604 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>APEX-HARNESS Security Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        :root {
+            --neon-blue: #0ea5e9;
+            --neon-green: #22c55e;
+            --neon-red: #ef4444;
+            --neon-orange: #f97316;
+            --bg-dark: #020617;
+            --panel-bg: rgba(15, 23, 42, 0.85);
+        }
+        
+        body { 
+            background-color: var(--bg-dark); 
+            color: #f8fafc; 
+            font-family: 'Inter', system-ui, sans-serif;
+            background-image: 
+                radial-gradient(circle at 15% 50%, rgba(14, 165, 233, 0.08), transparent 25%),
+                radial-gradient(circle at 85% 30%, rgba(34, 197, 94, 0.05), transparent 25%);
+            background-attachment: fixed;
+        }
+        
+        .glass-panel { 
+            background: var(--panel-bg);
+            backdrop-filter: blur(12px); 
+            border: 1px solid rgba(255, 255, 255, 0.05); 
+            border-radius: 1rem;
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5), 0 0 15px rgba(14, 165, 233, 0.05);
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        
+        .glass-panel:hover {
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5), 0 0 20px rgba(14, 165, 233, 0.1);
+        }
+
+        #terminal { 
+            font-family: 'Fira Code', 'Courier New', monospace; 
+            height: 450px; 
+            overflow-y: auto; 
+            background-color: #000; 
+            padding: 1.5rem; 
+            border-radius: 0.75rem; 
+            white-space: pre-wrap; 
+            word-wrap: break-word;
+            border: 1px solid rgba(255,255,255,0.05);
+            box-shadow: inset 0 0 20px rgba(0,0,0,1);
+            scroll-behavior: smooth;
+        }
+
+        .log-line { display: block; margin-bottom: 4px; line-height: 1.4; font-size: 0.9rem; text-shadow: 0 0 2px rgba(255,255,255,0.2); }
+        .text-error { color: var(--neon-red); text-shadow: 0 0 8px rgba(239, 68, 68, 0.6); font-weight: bold; }
+        .text-success { color: var(--neon-green); text-shadow: 0 0 5px rgba(34, 197, 94, 0.4); }
+        .text-warning { color: var(--neon-orange); text-shadow: 0 0 5px rgba(249, 115, 22, 0.4); }
+        .text-info { color: var(--neon-blue); }
+        .text-dim { color: #64748b; }
+
+        .btn { 
+            padding: 0.75rem 1.25rem; 
+            border-radius: 0.5rem; 
+            font-weight: 600; 
+            cursor: pointer; 
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            font-size: 0.85rem;
+            position: relative;
+            overflow: hidden;
+            border: 1px solid transparent;
+        }
+        
+        .btn::after {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 0;
+            height: 0;
+            background: rgba(255,255,255,0.2);
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            transition: width 0.4s ease-out, height 0.4s ease-out;
+        }
+        
+        .btn:active::after {
+            width: 200px;
+            height: 200px;
+        }
+
+        .btn-primary { 
+            background: linear-gradient(135deg, #1e40af, #2563eb); 
+            border-color: #3b82f6;
+            box-shadow: 0 4px 15px rgba(37, 99, 235, 0.2);
+        }
+        .btn-primary:hover { 
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(37, 99, 235, 0.4);
+            border-color: #60a5fa;
+        }
+        
+        .btn-danger { 
+            background: linear-gradient(135deg, #991b1b, #dc2626); 
+            border-color: #ef4444;
+            box-shadow: 0 4px 15px rgba(220, 38, 38, 0.2);
+        }
+        .btn-danger:hover { 
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(220, 38, 38, 0.5);
+            border-color: #f87171;
+            text-shadow: 0 0 8px rgba(255,255,255,0.5);
+        }
+
+        /* Metric Cards */
+        .metric-card {
+            background: linear-gradient(180deg, #1e293b, #0f172a);
+            border: 1px solid rgba(255,255,255,0.05);
+            transition: all 0.3s;
+            position: relative;
+            overflow: hidden;
+        }
+        .metric-card::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0; height: 3px;
+        }
+        .metric-card:hover { transform: scale(1.02); z-index: 10; }
+        .metric-total::before { background: #64748b; box-shadow: 0 0 10px #64748b; }
+        .metric-confirmed::before { background: var(--neon-red); box-shadow: 0 0 15px var(--neon-red); }
+        .metric-probable::before { background: var(--neon-orange); box-shadow: 0 0 15px var(--neon-orange); }
+        .metric-null::before { background: var(--neon-green); box-shadow: 0 0 15px var(--neon-green); }
+
+        .value-animate { animation: popIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
+        @keyframes popIn {
+            0% { transform: scale(0.8); opacity: 0; }
+            50% { transform: scale(1.2); }
+            100% { transform: scale(1); opacity: 1; }
+        }
+
+        /* Toast Notifications */
+        #toast-container { position: fixed; top: 1rem; right: 1rem; z-index: 50; display: flex; flex-direction: column; gap: 0.5rem; }
+        .toast {
+            background: rgba(15, 23, 42, 0.95);
+            border-left: 4px solid var(--neon-blue);
+            color: white;
+            padding: 1rem 1.5rem;
+            border-radius: 0.5rem;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+            transform: translateX(120%);
+            animation: slideIn 0.4s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            backdrop-filter: blur(8px);
+        }
+        @keyframes slideIn { to { transform: translateX(0); } }
+        .toast.fade-out { animation: fadeOut 0.4s ease forwards; }
+        @keyframes fadeOut { to { opacity: 0; transform: translateY(-10px); } }
+
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: #0f172a; }
+        ::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; border: 2px solid #0f172a; }
+        ::-webkit-scrollbar-thumb:hover { background: #475569; }
+
+        /* Table Styles */
+        .finding-row { transition: background-color 0.2s; }
+        .finding-row:hover { background-color: rgba(255,255,255,0.03); }
+        .badge { font-size: 0.7rem; padding: 0.25rem 0.5rem; border-radius: 9999px; letter-spacing: 0.05em; font-weight: 700; }
+        
+        .pulse-dot {
+            height: 12px; width: 12px; background-color: #22c55e; border-radius: 50%; display: inline-block;
+            box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.7);
+            animation: pulse 2s infinite;
+        }
+        @keyframes pulse {
+            0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.7); }
+            70% { transform: scale(1); box-shadow: 0 0 0 10px rgba(34, 197, 94, 0); }
+            100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(34, 197, 94, 0); }
+        }
+    </style>
+</head>
+<body>
+
+    <div id="toast-container"></div>
+
+    <div class="max-w-screen-2xl mx-auto space-y-6">
+        
+        <!-- Header -->
+        <header class="flex justify-between items-center glass-panel p-6">
+            <div class="flex items-center gap-4">
+                <div class="p-3 bg-blue-900/30 rounded-lg border border-blue-500/30">
+                    <i class="fa-solid fa-spider text-2xl text-blue-400"></i>
+                </div>
+                <div>
+                    <h1 class="text-3xl font-black tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-cyan-300">
+                        APEX-HARNESS
+                    </h1>
+                    <p class="text-slate-400 text-sm font-medium mt-1">META THREADS API VULNERABILITY SCANNER</p>
+                </div>
+            </div>
+            <div class="flex items-center gap-6">
+                <div class="text-right">
+                    <div class="text-xs text-slate-500 uppercase font-bold tracking-wider">Engine Status</div>
+                    <div class="flex items-center gap-2 mt-1">
+                        <span class="pulse-dot"></span>
+                        <span class="text-green-400 font-bold text-sm tracking-wide">ONLINE & READY</span>
+                    </div>
+                </div>
+            </div>
+        </header>
+
+        <!-- Main Content Grid -->
+        <div class="grid grid-cols-1 xl:grid-cols-12 gap-6">
+            
+            <!-- Left Column: Controls & Metrics -->
+            <div class="xl:col-span-4 space-y-6 flex flex-col">
+                
+                <!-- Launchpad -->
+                <div class="glass-panel p-6 flex-1">
+                    <div class="flex items-center gap-3 mb-6 border-b border-slate-700/50 pb-4">
+                        <i class="fa-solid fa-rocket text-blue-400"></i>
+                        <h2 class="text-xl font-bold text-slate-100">Tactical Launchpad</h2>
+                    </div>
+                    
+                    <button onclick="startSuite('all')" class="btn btn-danger w-full mb-6 py-4 text-base shadow-[0_0_20px_rgba(220,38,38,0.3)]">
+                        <i class="fa-solid fa-skull-crossbones mr-2"></i> EXECUTE FULL ARSENAL
+                    </button>
+                    
+                    <div class="grid grid-cols-2 gap-3">
+                        <button onclick="startSuite('token_confusion')" class="btn btn-primary flex flex-col items-center justify-center gap-2 h-20">
+                            <i class="fa-solid fa-key"></i> <span class="text-[0.7rem]">Token Matrix</span>
+                        </button>
+                        <button onclick="startSuite('bola')" class="btn btn-primary flex flex-col items-center justify-center gap-2 h-20">
+                            <i class="fa-solid fa-user-ninja"></i> <span class="text-[0.7rem]">BOLA Tests</span>
+                        </button>
+                        <button onclick="startSuite('scope')" class="btn btn-primary flex flex-col items-center justify-center gap-2 h-20">
+                            <i class="fa-solid fa-shield-halved"></i> <span class="text-[0.7rem]">Scope Gap</span>
+                        </button>
+                        <button onclick="startSuite('oauth')" class="btn btn-primary flex flex-col items-center justify-center gap-2 h-20">
+                            <i class="fa-solid fa-arrow-right-arrow-left"></i> <span class="text-[0.7rem]">OAuth Flow</span>
+                        </button>
+                        <button onclick="startSuite('race')" class="btn btn-primary flex flex-col items-center justify-center gap-2 h-20">
+                            <i class="fa-solid fa-stopwatch"></i> <span class="text-[0.7rem]">Race Cond</span>
+                        </button>
+                        <button onclick="startSuite('field_enum')" class="btn btn-primary flex flex-col items-center justify-center gap-2 h-20">
+                            <i class="fa-solid fa-magnifying-glass"></i> <span class="text-[0.7rem]">Field Enum</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Metrics Dashboard -->
+                <div class="glass-panel p-6">
+                    <div class="flex justify-between items-center mb-6 border-b border-slate-700/50 pb-4">
+                        <div class="flex items-center gap-3">
+                            <i class="fa-solid fa-chart-line text-blue-400"></i>
+                            <h2 class="text-xl font-bold text-slate-100">Live Telemetry</h2>
+                        </div>
+                    </div>
+                    
+                    <div class="grid grid-cols-2 gap-4 mb-6">
+                        <div class="metric-card metric-total p-4 rounded-xl text-center">
+                            <div class="text-xs uppercase tracking-wider text-slate-400 font-semibold mb-1">Payloads</div>
+                            <div id="metric-total" class="text-4xl font-black text-slate-200 font-mono">0</div>
+                        </div>
+                        <div class="metric-card metric-confirmed p-4 rounded-xl text-center bg-red-900/10">
+                            <div class="text-xs uppercase tracking-wider text-red-400/80 font-semibold mb-1">Critical</div>
+                            <div id="metric-confirmed" class="text-4xl font-black text-red-400 font-mono drop-shadow-[0_0_8px_rgba(239,68,68,0.5)]">0</div>
+                        </div>
+                        <div class="metric-card metric-probable p-4 rounded-xl text-center bg-orange-900/10">
+                            <div class="text-xs uppercase tracking-wider text-orange-400/80 font-semibold mb-1">Probable</div>
+                            <div id="metric-probable" class="text-4xl font-black text-orange-400 font-mono drop-shadow-[0_0_8px_rgba(249,115,22,0.5)]">0</div>
+                        </div>
+                        <div class="metric-card metric-null p-4 rounded-xl text-center bg-green-900/10">
+                            <div class="text-xs uppercase tracking-wider text-green-400/80 font-semibold mb-1">Secure</div>
+                            <div id="metric-null" class="text-4xl font-black text-green-400 font-mono">0</div>
+                        </div>
+                    </div>
+                    
+                    <div class="h-48 w-full relative">
+                        <canvas id="findingsChart"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right Column: Terminal & Findings -->
+            <div class="xl:col-span-8 flex flex-col gap-6">
+                
+                <!-- Live Terminal -->
+                <div class="glass-panel p-6 flex flex-col" style="height: 500px;">
+                    <div class="flex justify-between items-center mb-4 border-b border-slate-700/50 pb-4">
+                        <div class="flex items-center gap-3">
+                            <i class="fa-solid fa-terminal text-blue-400"></i>
+                            <h2 class="text-xl font-bold text-slate-100">Execution Stream</h2>
+                            <div class="flex gap-1 ml-4 opacity-50">
+                                <div class="w-3 h-3 rounded-full bg-red-500"></div>
+                                <div class="w-3 h-3 rounded-full bg-yellow-500"></div>
+                                <div class="w-3 h-3 rounded-full bg-green-500"></div>
+                            </div>
+                        </div>
+                        <div class="flex gap-3">
+                            <button id="autoScrollToggle" onclick="toggleAutoScroll()" class="text-xs font-semibold px-3 py-1 rounded bg-blue-500/20 text-blue-300 border border-blue-500/30 hover:bg-blue-500/40 transition">
+                                <i class="fa-solid fa-lock mr-1"></i> Auto-scroll: ON
+                            </button>
+                            <button onclick="document.getElementById('terminal').innerHTML = ''" class="text-xs font-semibold px-3 py-1 rounded bg-slate-700/50 text-slate-300 hover:bg-slate-600 transition">
+                                <i class="fa-solid fa-eraser mr-1"></i> Clear
+                            </button>
+                        </div>
+                    </div>
+                    <div id="terminal" class="flex-1 relative"></div>
+                </div>
+
+                <!-- Findings Table -->
+                <div class="glass-panel p-6 flex-1 flex flex-col min-h-[300px]">
+                    <div class="flex justify-between items-center mb-4 border-b border-slate-700/50 pb-4">
+                        <div class="flex items-center gap-3">
+                            <i class="fa-solid fa-bug text-red-400"></i>
+                            <h2 class="text-xl font-bold text-slate-100">Vulnerability Registry</h2>
+                        </div>
+                        <div class="flex items-center gap-4">
+                            <button onclick="window.location.href='/api/export/csv'" class="text-sm font-semibold text-emerald-400 hover:text-emerald-300 transition flex items-center gap-2">
+                                <i class="fa-solid fa-file-csv"></i> Export CSV
+                            </button>
+                            <button onclick="fetchStats()" class="text-sm font-semibold text-blue-400 hover:text-blue-300 transition flex items-center gap-2">
+                                <i class="fa-solid fa-rotate-right"></i> Sync DB
+                            </button>
+                        </div>
+                    </div>
+                    <div class="overflow-x-auto flex-1">
+                        <table class="w-full text-sm text-left border-collapse">
+                            <thead class="text-xs text-slate-400 uppercase bg-slate-800/50 border-y border-slate-700/50">
+                                <tr>
+                                    <th class="px-5 py-4 font-semibold">ID</th>
+                                    <th class="px-5 py-4 font-semibold">Vulnerability Class</th>
+                                    <th class="px-5 py-4 font-semibold">Target Endpoint</th>
+                                    <th class="px-5 py-4 font-semibold text-center">Status</th>
+                                    <th class="px-5 py-4 font-semibold text-center">Severity</th>
+                                </tr>
+                            </thead>
+                            <tbody id="findings-body" class="divide-y divide-slate-700/50">
+                                <!-- Populated via JS -->
+                                <tr><td colspan="5" class="text-center py-8 text-slate-500 italic">No vulnerabilities detected in current run.</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <script>
+        // --- UI Utils ---
+        function showToast(message, type = 'info') {
+            const container = document.getElementById('toast-container');
+            const toast = document.createElement('div');
+            toast.className = 'toast';
+            
+            let icon = 'fa-info-circle';
+            let colorClass = 'text-blue-400';
+            let borderClass = 'border-blue-500';
+            
+            if (type === 'success') { icon = 'fa-check-circle'; colorClass = 'text-green-400'; borderClass = 'border-green-500'; }
+            if (type === 'error') { icon = 'fa-skull'; colorClass = 'text-red-400'; borderClass = 'border-red-500'; }
+            if (type === 'warning') { icon = 'fa-exclamation-triangle'; colorClass = 'text-orange-400'; borderClass = 'border-orange-500'; }
+            
+            toast.style.borderLeftColor = `var(--neon-${type === 'error' ? 'red' : type === 'warning' ? 'orange' : type === 'success' ? 'green' : 'blue'})`;
+            
+            toast.innerHTML = `
+                <i class="fa-solid ${icon} ${colorClass} text-xl"></i>
+                <div class="font-medium tracking-wide text-sm">${message}</div>
+            `;
+            
+            container.appendChild(toast);
+            
+            setTimeout(() => {
+                toast.classList.add('fade-out');
+                setTimeout(() => toast.remove(), 400);
+            }, 4000);
+        }
+
+        // --- Chart.js Setup ---
+        Chart.defaults.color = '#94a3b8';
+        Chart.defaults.font.family = "'Inter', sans-serif";
+        const ctx = document.getElementById('findingsChart').getContext('2d');
+        const findingsChart = new Chart(ctx, {
+            type: 'doughnut',
+            data: {
+                labels: ['Critical (Confirmed)', 'High (Probable)', 'Secure (Null Signal)'],
+                datasets: [{
+                    data: [0, 0, 1],
+                    backgroundColor: [
+                        'rgba(239, 68, 68, 0.8)',
+                        'rgba(249, 115, 22, 0.8)',
+                        'rgba(34, 197, 94, 0.4)'
+                    ],
+                    borderColor: [
+                        '#ef4444',
+                        '#f97316',
+                        '#22c55e'
+                    ],
+                    borderWidth: 1,
+                    hoverOffset: 4
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                cutout: '75%',
+                plugins: {
+                    legend: {
+                        position: 'right',
+                        labels: { padding: 20, boxWidth: 12, usePointStyle: true }
+                    },
+                    tooltip: {
+                        backgroundColor: 'rgba(15, 23, 42, 0.9)',
+                        titleFont: { size: 13 },
+                        bodyFont: { size: 14, weight: 'bold' },
+                        padding: 12,
+                        cornerRadius: 8,
+                        displayColors: true
+                    }
+                }
+            }
+        });
+
+        // --- Socket.IO & Terminal ---
+        const socket = io();
+        const terminal = document.getElementById('terminal');
+        let autoScroll = true;
+        let lineCount = 0;
+        const MAX_LINES = 1000;
+
+        function toggleAutoScroll() {
+            autoScroll = !autoScroll;
+            const btn = document.getElementById('autoScrollToggle');
+            if(autoScroll) {
+                btn.innerHTML = '<i class="fa-solid fa-lock mr-1"></i> Auto-scroll: ON';
+                btn.className = "text-xs font-semibold px-3 py-1 rounded bg-blue-500/20 text-blue-300 border border-blue-500/30 hover:bg-blue-500/40 transition";
+                terminal.scrollTop = terminal.scrollHeight;
+            } else {
+                btn.innerHTML = '<i class="fa-solid fa-lock-open mr-1"></i> Auto-scroll: OFF';
+                btn.className = "text-xs font-semibold px-3 py-1 rounded bg-slate-700/50 text-slate-300 hover:bg-slate-600 transition border border-transparent";
+            }
+        }
+
+        terminal.addEventListener('scroll', () => {
+            if(autoScroll && terminal.scrollTop < (terminal.scrollHeight - terminal.clientHeight - 50)) {
+                toggleAutoScroll(); // User scrolled up manually, turn off autoscroll
+            }
+        });
+
+        socket.on('log_data', function(msg) {
+            const line = document.createElement('span');
+            line.className = 'log-line';
+            
+            let text = msg.data;
+            if (text.includes('🔴 CONFIRMED_FINDING')) {
+                line.classList.add('text-error');
+                showToast("Critical vulnerability confirmed!", "error");
+            } else if (text.includes('🟠 PROBABLE_FINDING')) {
+                line.classList.add('text-warning');
+                showToast("Probable finding detected", "warning");
+            } else if (text.includes('Rate limited')) {
+                line.classList.add('text-warning');
+            } else if (text.includes('✅') || text.includes(' 200 |')) {
+                line.classList.add('text-success');
+            } else if (text.includes('--- Starting')) {
+                line.classList.add('text-info', 'font-bold', 'mt-4', 'mb-2', 'border-b', 'border-blue-900', 'pb-1');
+            } else {
+                line.classList.add('text-dim');
+                // Format timestamps to be dimmer than the rest of the log
+                text = text.replace(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z) \|/, '<span class="opacity-50">$1</span> |');
+            }
+            
+            line.innerHTML = text; // using innerHTML for the timestamp span trick above
+            terminal.appendChild(line);
+            lineCount++;
+            
+            if (lineCount > MAX_LINES) {
+                terminal.removeChild(terminal.firstChild);
+                lineCount--;
+            }
+            
+            if(autoScroll) {
+                terminal.scrollTop = terminal.scrollHeight;
+            }
+        });
+
+        // --- API Interactions ---
+        async function startSuite(suite) {
+            try {
+                showToast(`Initializing ${suite.toUpperCase()} sequence...`, 'info');
+                const res = await fetch('/api/start', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({suite: suite, delay_ms: 500})
+                });
+                const data = await res.json();
+                console.log(`Started: ${data.suite}`);
+            } catch (err) {
+                console.error(err);
+                showToast("Failed to initiate sequence. Check server connection.", "error");
+            }
+        }
+
+        // --- Metrics Sync ---
+        let lastConfirmed = -1;
+        
+        function animateValue(id, newValue) {
+            const obj = document.getElementById(id);
+            if(obj.textContent !== newValue.toString()) {
+                obj.textContent = newValue;
+                obj.classList.remove('value-animate');
+                void obj.offsetWidth; // trigger reflow
+                obj.classList.add('value-animate');
+            }
+        }
+
+        async function fetchStats() {
+            try {
+                const res = await fetch('/api/stats');
+                const data = await res.json();
+                
+                if(data.total_tests !== undefined) {
+                    animateValue('metric-total', data.total_tests);
+                    animateValue('metric-confirmed', data.confirmed_findings);
+                    animateValue('metric-probable', data.probable_findings);
+                    animateValue('metric-null', data.null_signals);
+                    
+                    // Update Chart
+                    if (data.confirmed_findings > 0 || data.probable_findings > 0 || data.null_signals > 0) {
+                        findingsChart.data.datasets[0].data = [
+                            data.confirmed_findings, 
+                            data.probable_findings, 
+                            data.null_signals || 1 // Avoid completely empty chart if only 0s
+                        ];
+                        findingsChart.update();
+                    }
+
+                    // Alert if new confirmed
+                    if (lastConfirmed !== -1 && data.confirmed_findings > lastConfirmed) {
+                        showToast(`NEW CRITICAL FINDING RECORDED! Total: ${data.confirmed_findings}`, "error");
+                    }
+                    lastConfirmed = data.confirmed_findings;
+                }
+
+                if(data.findings_list) {
+                    const tbody = document.getElementById('findings-body');
+                    const relevantFindings = data.findings_list.filter(f => f.classification === "CONFIRMED_FINDING" || f.classification === "PROBABLE_FINDING");
+                    
+                    if (relevantFindings.length > 0) {
+                        tbody.innerHTML = '';
+                        // Sort confirmed first, then probable, then by time desc
+                        relevantFindings.sort((a, b) => {
+                            if (a.classification === b.classification) return b.id - a.id;
+                            return a.classification === "CONFIRMED_FINDING" ? -1 : 1;
+                        });
+                        
+                        relevantFindings.forEach(f => {
+                            const tr = document.createElement('tr');
+                            tr.className = "finding-row";
+                            
+                            const isCrit = f.classification === "CONFIRMED_FINDING";
+                            const badgeClass = isCrit ? "bg-red-500/20 text-red-400 border border-red-500/50" : "bg-orange-500/20 text-orange-400 border border-orange-500/50";
+                            const iconClass = isCrit ? "fa-fire text-red-500" : "fa-triangle-exclamation text-orange-500";
+                            
+                            tr.innerHTML = `
+                                <td class="px-5 py-4 font-mono text-slate-300 font-semibold">${f.finding_id}</td>
+                                <td class="px-5 py-4 font-medium text-slate-200">
+                                    <div class="flex items-center gap-2">
+                                        <i class="fa-solid ${iconClass} w-4 text-center"></i>
+                                        ${f.finding_class || 'Unknown Mechanism'}
+                                    </div>
+                                </td>
+                                <td class="px-5 py-4 font-mono text-[11px] text-blue-300 tracking-tight">${f.endpoint_id}</td>
+                                <td class="px-5 py-4 text-center"><span class="px-2 py-1 rounded bg-slate-700/50 text-slate-300 text-xs font-mono border border-slate-600">${f.http_status}</span></td>
+                                <td class="px-5 py-4 text-center"><span class="badge ${badgeClass}">${isCrit ? 'CRITICAL' : 'HIGH'}</span></td>
+                            `;
+                            tbody.appendChild(tr);
+                        });
+                    } else {
+                        tbody.innerHTML = '<tr><td colspan="5" class="text-center py-8 text-slate-500 italic">No vulnerabilities detected in current run.</td></tr>';
+                    }
+                }
+            } catch (err) {
+                console.error("Failed to sync metrics from DB", err);
+            }
+        }
+
+        setInterval(fetchStats, 3000); // More aggressive polling for that addictive feel
+        fetchStats();
+        
+        // Initial welcome toast
+        setTimeout(() => showToast("APEX-HARNESS core initialized. Standing by for execution orders.", "info"), 500);
+    </script>
+</body>
+</html>
